@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>GS Status Bar app icon</title>
+  <desc>Two horizontal usage meters on a midnight blue tile.</desc>
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0.86" y2="1">
+      <stop stop-color="#2C3C6E"/>
+      <stop offset="1" stop-color="#11182F"/>
+    </linearGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#7081BA" stop-opacity=".55"/>
+      <stop offset="1" stop-color="#374566" stop-opacity=".52"/>
+    </linearGradient>
+    <linearGradient id="mint" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#BBF9DD"/>
+      <stop offset="1" stop-color="#6DE3C3"/>
+    </linearGradient>
+    <linearGradient id="apricot" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#FFD5AB"/>
+      <stop offset="1" stop-color="#FFA781"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="92" y="92" width="840" height="840" rx="205" fill="url(#tile)"/>
+  <rect x="95" y="95" width="834" height="834" rx="202" fill="none" stroke="url(#rim)" stroke-width="6"/>
+  <g fill="#445579">
+    <rect x="232" y="351" width="560" height="130" rx="65"/>
+    <rect x="232" y="543" width="560" height="130" rx="65"/>
+  </g>
+  <rect x="232" y="351" width="408" height="130" rx="65" fill="url(#mint)"/>
+  <rect x="232" y="543" width="272" height="130" rx="65" fill="url(#apricot)"/>
+</svg>
