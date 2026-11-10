@@ -271,7 +271,7 @@ final class UsageStore {
     func chooseCodexFolder() {
         let panel = NSOpenPanel()
         panel.title = "Choose Codex Sessions Folder"
-        panel.message = "Select your Codex sessions folder to allow read-only access."
+        panel.message = "The default is ~/.codex/sessions. Click Connect to grant read-only access to your sessions folder."
         panel.prompt = "Connect"
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
