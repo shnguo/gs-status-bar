@@ -4,6 +4,9 @@ import UsageCore
 /// The dropdown shown when clicking the menu bar item.
 struct UsagePanel: View {
     @Bindable var store: UsageStore
+    #if APP_STORE
+    @State private var copiedClaudeCommand = false
+    #endif
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -31,15 +34,16 @@ struct UsagePanel: View {
                 Text("Both providers are hidden.").font(.callout).foregroundStyle(.secondary)
             }
             ForEach(store.visibleProviders) { provider in
-                ProviderSection(provider: provider, snapshot: store.snapshot(for: provider), now: store.now)
+                VStack(alignment: .leading, spacing: 8) {
+                    ProviderSection(provider: provider, snapshot: store.snapshot(for: provider),
+                                    now: store.now, emptyHint: emptyHint(for: provider))
+                    #if APP_STORE
+                    if !store.isShowingSample { sourceControls(for: provider) }
+                    #endif
+                }
             }
 
             Divider()
-
-            #if APP_STORE
-            storeSources
-            Divider()
-            #endif
 
             VStack(alignment: .leading, spacing: 6) {
                 Toggle("Show Claude Code", isOn: $store.showClaude)
@@ -60,7 +64,7 @@ struct UsagePanel: View {
 
             HStack {
                 #if APP_STORE
-                Button(store.isShowingSample ? "Hide Sample Data" : "Show Sample Data") {
+                Button(store.isShowingSample ? "Hide Sample Data" : "Try Sample Data") {
                     store.toggleSampleData()
                 }
                 Button("Privacy Policy") { showPrivacyPolicy() }
@@ -69,6 +73,9 @@ struct UsagePanel: View {
                 Button("Quit") { NSApp.terminate(nil) }
                     .keyboardShortcut("q")
             }
+            #if APP_STORE
+            .controlSize(.small)
+            #endif
         }
         .padding(14)
         .frame(width: 320)
@@ -80,48 +87,94 @@ struct UsagePanel: View {
         }
     }
 
+    private func emptyHint(for provider: Provider) -> String {
+        switch provider {
+        case .claude:
+            #if APP_STORE
+            "Copy the command, run it in Terminal, then click Paste."
+            #else
+            "No data yet. Run scripts/install-claude-hook.sh, then it updates after each Claude Code reply, in the terminal or the Claude desktop app."
+            #endif
+        case .codex:
+            #if APP_STORE
+            store.codexFolderName == nil
+                ? "Connect once to see your limits update automatically."
+                : "Connected. Usage appears after your next Codex request."
+            #else
+            "No data yet. It appears after your next Codex request."
+            #endif
+        }
+    }
+
     #if APP_STORE
-    private var storeSources: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Button(store.codexFolderName == nil ? "Choose Codex Folder…" : "Change Folder…") {
-                    store.chooseCodexFolder()
+    private func sourceControls(for provider: Provider) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            switch provider {
+            case .codex:
+                HStack {
+                    if let folder = store.codexFolderName {
+                        Button("Change Folder…") { store.chooseCodexFolder() }
+                            .help("Connected to \(folder)")
+                        Button("Disconnect") { store.disconnectCodexFolder() }
+                    } else {
+                        Button("Connect Codex…") { store.chooseCodexFolder() }
+                    }
                 }
-                if let folder = store.codexFolderName {
-                    Text(folder).lineLimit(1).foregroundStyle(.secondary)
-                    Spacer(minLength: 0)
-                    Button("Disconnect") { store.disconnectCodexFolder() }
+                if let message = store.codexFolderError {
+                    Text(message).foregroundStyle(.secondary)
                 }
-            }
-            if let message = store.codexFolderError {
-                Text(message).foregroundStyle(.secondary)
-            }
-            HStack {
-                Button("Import Claude Report…") { store.importClaudeReport() }
-                    .disabled(store.isImportingClaudeReport)
-                if store.isImportingClaudeReport {
-                    ProgressView().controlSize(.small)
+            case .claude:
+                HStack {
+                    Button(copiedClaudeCommand ? "Command Copied" : "Copy Command") {
+                        let pasteboard = NSPasteboard.general
+                        pasteboard.clearContents()
+                        copiedClaudeCommand = pasteboard.setString(StoreClaudeReport.copyCommand, forType: .string)
+                    }
+                    .help("Copy the Claude Code usage command to run in Terminal")
+                    PasteButton(payloadType: String.self, onPaste: pasteClaudeUsage)
+                        .accessibilityLabel("Paste Claude Usage")
+                        .help("Paste copied Claude Code usage")
+                    Menu {
+                        Button("Import Report File…") {
+                            copiedClaudeCommand = false
+                            store.importClaudeReport()
+                        }
+                        if store.hasClaudeReport {
+                            Button("Clear Report") { store.clearClaudeReport() }
+                        }
+                    } label: {
+                        Label("Claude Report Options", systemImage: "ellipsis.circle")
+                            .labelStyle(.iconOnly)
+                    }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    if store.isImportingClaudeReport {
+                        ProgressView().controlSize(.small)
+                    }
                 }
-                Spacer(minLength: 0)
-                if store.hasClaudeReport {
-                    Button("Clear Report") { store.clearClaudeReport() }
-                        .disabled(store.isImportingClaudeReport)
+                .disabled(store.isImportingClaudeReport)
+                if let message = store.claudeImportError {
+                    Text(message).foregroundStyle(.secondary)
                 }
-            }
-            if let message = store.claudeImportError {
-                Text(message).foregroundStyle(.secondary)
             }
         }
         .font(.caption)
+        .controlSize(.small)
+    }
+
+    private func pasteClaudeUsage(_ values: [String]) {
+        guard let text = values.first, !store.isImportingClaudeReport else { return }
+        copiedClaudeCommand = false
+        store.pasteClaudeReport(text)
     }
 
     private func showPrivacyPolicy() {
         let alert = NSAlert()
         alert.messageText = "GS Status Bar Privacy Policy"
         alert.informativeText = """
-            GS Status Bar processes usage data on this Mac. It reads Codex session files from the folder you select to extract rate-limit fields, and extracts usage limits from Claude reports you import.
+            GS Status Bar processes usage data on this Mac. It reads rate-limit fields from the Codex sessions folder you select and extracts limits from Claude reports you paste or import.
 
-            The app saves your settings, folder permission, and parsed Claude usage summary locally. It does not store a copy of the imported report or send this data anywhere. Use Disconnect or Clear Report to remove the saved folder permission or Claude summary.
+            The app saves your settings, folder permission, and parsed Claude usage summary locally. The original report and usage data stay on your Mac. Use Disconnect or Clear Report to remove the saved folder permission or Claude summary.
             """
         alert.addButton(withTitle: "Done")
         let policy = (Bundle.main.object(forInfoDictionaryKey: "GSPrivacyPolicyURL") as? String)
@@ -141,6 +194,7 @@ private struct ProviderSection: View {
     let provider: Provider
     let snapshot: UsageSnapshot?
     let now: Date
+    let emptyHint: String
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -173,23 +227,6 @@ private struct ProviderSection: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-        }
-    }
-
-    private var emptyHint: String {
-        switch provider {
-        case .claude:
-            #if APP_STORE
-            "Import a Claude Code usage report to see your limits here."
-            #else
-            "No data yet. Run scripts/install-claude-hook.sh, then it updates after each Claude Code reply, in the terminal or the Claude desktop app."
-            #endif
-        case .codex:
-            #if APP_STORE
-            "Choose your Codex sessions folder. Usage appears after a Codex request."
-            #else
-            "No data yet. It appears after your next Codex request."
-            #endif
         }
     }
 }

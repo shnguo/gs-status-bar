@@ -271,13 +271,13 @@ final class UsageStore {
     func chooseCodexFolder() {
         let panel = NSOpenPanel()
         panel.title = "Choose Codex Sessions Folder"
-        panel.message = "Select your Codex sessions folder. The usual location is ~/.codex/sessions."
+        panel.message = "Select your Codex sessions folder to allow read-only access."
         panel.prompt = "Connect"
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.canCreateDirectories = false
         panel.showsHiddenFiles = true
-        panel.directoryURL = codexFolder?.url ?? CodexReader.defaultSessionsDir
+        panel.directoryURL = codexFolder?.url ?? Self.suggestedCodexSessionsFolder
 
         NSApp.activate()
         guard panel.runModal() == .OK, let url = panel.url else { return }
@@ -289,6 +289,18 @@ final class UsageStore {
         } catch {
             codexFolderError = "Couldn’t open this folder. Choose your Codex sessions folder again."
         }
+    }
+
+    private static var suggestedCodexSessionsFolder: URL? {
+        if let codexHome = ProcessInfo.processInfo.environment["CODEX_HOME"], !codexHome.isEmpty {
+            return CodexReader.defaultSessionsDir
+        }
+
+        // Foundation resolves the current home to the app container in the sandbox.
+        // Use the account home only to position the system picker.
+        guard let accountHome = getpwuid(getuid())?.pointee.pw_dir else { return nil }
+        return URL(fileURLWithPath: String(cString: accountHome), isDirectory: true)
+            .appendingPathComponent(".codex/sessions", isDirectory: true)
     }
 
     func disconnectCodexFolder() {
@@ -310,14 +322,20 @@ final class UsageStore {
         NSApp.activate()
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
+        loadClaudeReport { try StoreClaudeReport.readSelectedFile(url) }
+    }
+
+    func pasteClaudeReport(_ text: String) {
+        loadClaudeReport { try StoreClaudeReport.readPastedText(text) }
+    }
+
+    private func loadClaudeReport(_ readReport: @escaping @Sendable () throws -> UsageSnapshot) {
         claudeImportError = nil
         isImportingClaudeReport = true
         Task {
             defer { isImportingClaudeReport = false }
             do {
-                let report = try await Task.detached(priority: .userInitiated) {
-                    try StoreClaudeReport.readSelectedFile(url)
-                }.value
+                let report = try await Task.detached(priority: .userInitiated, operation: readReport).value
                 defaults.set(try JSONEncoder().encode(report), forKey: Self.claudeReportKey)
                 claude = report
                 now = Date()

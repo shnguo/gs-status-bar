@@ -47,18 +47,19 @@ Move the app to `/Applications` if you turn on "Launch at login".
 ## Mac App Store build
 
 Open **GSStatusBar.xcodeproj** in Xcode 16 or later and select the **GSStatusBar** scheme.
-The App Store build uses the macOS App Sandbox. In the menu, select **Choose Codex Folder…**
-and open the Codex **sessions** folder to grant read-only access. The default is
-**~/.codex/sessions**. Press **Command–Shift–G** in the picker to enter that path, or select
-the **sessions** folder inside your custom Codex data folder.
+The App Store build uses the macOS App Sandbox. Select **Connect Codex…** and confirm the
+**sessions** folder in the system picker to grant read-only access. The picker opens at the
+usual **~/.codex/sessions** location when it exists. If you use a custom Codex data folder,
+choose its **sessions** folder instead. The app remembers your choice and updates automatically.
 
-Use **Import Claude Report…** to select a UTF-8 text, JSON, or JSONL Claude Code usage report
-of up to 2 MB. For example, create a text report with the Claude Code CLI:
+Under **Claude Code**, choose **Copy Command**, run the copied command in Terminal, then click
+**Paste** in GS Status Bar. The command copies the current usage output to your clipboard:
 
-    claude -p /usage > claude-usage.txt
+    claude -p /usage | pbcopy
 
-Import a fresh report to update the displayed Claude usage. Choose **Show Sample Data** to
-preview both providers before connecting your own data.
+Repeat those steps to refresh Claude usage. Use **Import Report File…** in the Claude report
+options if you have a UTF-8 text, JSON, or JSONL report of up to 2 MB. Choose **Try Sample Data**
+to preview both providers without connecting your own data.
 
 Build a local unsigned release from the repository root:
 
@@ -70,7 +71,7 @@ bundle ID registered to your team in App Store Connect. In Xcode **Build Setting
 **APP_STORE_PRIVACY_POLICY_URL** to the public HTTPS URL for the [privacy policy](#privacy-policy).
 Choose **Product → Archive**, then validate and upload the signed archive in Xcode Organizer.
 In App Store Connect, provide macOS screenshots, a support URL, and the same privacy policy URL.
-In App Review notes, point reviewers to **Show Sample Data** so they can try the app with no
+In App Review notes, point reviewers to **Try Sample Data** so they can try the app with no
 accounts or local reports. For a paid download, complete the Paid Apps Agreement and tax and
 banking setup before setting the price. [Apple distribution instructions](https://developer.apple.com/documentation/xcode/distributing-your-app-for-beta-testing-and-releases/) · [App Store Connect setup](https://developer.apple.com/help/app-store-connect/get-started/app-store-connect-workflow/)
 
@@ -78,7 +79,7 @@ banking setup before setting the price. [Apple distribution instructions](https:
 
 The Mac App Store edition of GS Status Bar processes usage data on your Mac. It reads files
 in the Codex sessions folder you choose and extracts rate-limit fields. It extracts usage limits
-from Claude Code reports you import. The app saves your settings, the folder permission, and the
+from Claude Code reports you paste or import. The app saves your settings, the folder permission, and the
 parsed Claude usage summary on your Mac. The original report stays in its existing location and
 usage data stays on your device. Use **Disconnect** to remove the saved folder permission or
 **Clear Report** to delete the imported usage summary.

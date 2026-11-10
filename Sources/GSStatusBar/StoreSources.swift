@@ -33,20 +33,31 @@ final class StoreCodexFolder: Sendable {
 }
 
 enum StoreClaudeReport {
+    static let copyCommand = "claude -p /usage | pbcopy"
+    private static let maximumBytes = 2 * 1024 * 1024
+
     /// The caller passes the URL received from the open panel, which starts security-scoped access.
     static func readSelectedFile(_ url: URL) throws -> UsageSnapshot {
         defer { url.stopAccessingSecurityScopedResource() }
         let values = try url.resourceValues(forKeys: [.isRegularFileKey, .contentModificationDateKey])
         guard values.isRegularFile == true else { throw CocoaError(.fileReadUnknown) }
 
-        let maximumBytes = 2 * 1024 * 1024
         let file = try FileHandle(forReadingFrom: url)
         defer { try? file.close() }
         let data = try file.read(upToCount: maximumBytes + 1) ?? Data()
+        return try parse(data, observedAt: values.contentModificationDate ?? Date())
+    }
+
+    static func readPastedText(_ text: String) throws -> UsageSnapshot {
+        guard text.utf8.count <= maximumBytes else { throw ImportError.tooLarge }
+        return try parse(Data(text.utf8), observedAt: Date())
+    }
+
+    private static func parse(_ data: Data, observedAt: Date) throws -> UsageSnapshot {
         guard data.count <= maximumBytes else {
             throw ImportError.tooLarge
         }
-        guard let report = ClaudeUsageText.parseImportedReport(data, fallbackDate: values.contentModificationDate ?? Date()) else {
+        guard let report = ClaudeUsageText.parseImportedReport(data, fallbackDate: observedAt) else {
             throw ImportError.invalidReport
         }
         return UsageSnapshot(provider: .claude, windows: report.windows, observedAt: report.observedAt,
@@ -59,8 +70,8 @@ enum StoreClaudeReport {
 
         var errorDescription: String? {
             switch self {
-            case .tooLarge: "Choose a Claude usage report that is 2 MB or smaller."
-            case .invalidReport: "No usage limits found. Choose a Claude Code usage report in text, JSON, or JSONL format."
+            case .tooLarge: "The usage report must be 2 MB or smaller."
+            case .invalidReport: "No usage limits found. Copy fresh /usage output or import a Claude Code usage report."
             }
         }
     }
