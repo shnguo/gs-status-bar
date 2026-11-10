@@ -1,6 +1,6 @@
 import Foundation
 
-public enum Provider: String, CaseIterable, Sendable, Identifiable {
+public enum Provider: String, CaseIterable, Codable, Sendable, Identifiable {
     case claude
     case codex
 
@@ -23,7 +23,7 @@ public enum Provider: String, CaseIterable, Sendable, Identifiable {
 }
 
 /// One rate-limit window, e.g. Claude's 5-hour session limit or Codex's weekly limit.
-public struct LimitWindow: Equatable, Sendable, Identifiable {
+public struct LimitWindow: Codable, Equatable, Sendable, Identifiable {
     /// Stable key from the source data ("five_hour", "primary", ...).
     public let key: String
     public let label: String
@@ -68,7 +68,7 @@ public struct LimitWindow: Equatable, Sendable, Identifiable {
 }
 
 /// The latest known usage for one provider.
-public struct UsageSnapshot: Equatable, Sendable {
+public struct UsageSnapshot: Codable, Equatable, Sendable {
     public let provider: Provider
     public let windows: [LimitWindow]
     /// When the provider reported these numbers.

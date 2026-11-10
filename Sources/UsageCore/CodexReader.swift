@@ -71,7 +71,9 @@ public enum CodexReader {
 
     /// Finds the last rate-limit event in a file, reading backwards from the end so large logs stay cheap.
     static func lastSnapshot(in file: URL) -> UsageSnapshot? {
-        guard let handle = try? FileHandle(forReadingFrom: file) else { return nil }
+        let file = file.resolvingSymlinksInPath()
+        guard (try? file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true,
+              let handle = try? FileHandle(forReadingFrom: file) else { return nil }
         defer { try? handle.close() }
         guard let size = try? handle.seekToEnd(), size > 0 else { return nil }
 
@@ -114,18 +116,21 @@ public enum CodexReader {
               let limits = payload["rate_limits"] as? [String: Any]
         else { return nil }
 
-        let observedAt = (obj["timestamp"] as? String).flatMap(JSONValue.date(iso:)) ?? Date()
+        let supportedDates = Date.distantPast...Date.distantFuture
+        let timestamp = (obj["timestamp"] as? String).flatMap(JSONValue.date(iso:))
+        let observedAt = timestamp.flatMap { supportedDates.contains($0) ? $0 : nil } ?? Date()
 
         var windows: [LimitWindow] = []
         for key in ["primary", "secondary"] {
             guard let w = limits[key] as? [String: Any],
-                  let used = JSONValue.number(w["used_percent"]) else { continue }
-            let minutes = JSONValue.number(w["window_minutes"]).map { Int($0) }
+                  let used = JSONValue.number(w["used_percent"]), used.isFinite else { continue }
+            let minutes = JSONValue.number(w["window_minutes"]).flatMap { Int(exactly: $0.rounded(.towardZero)) }
             var resetsAt = JSONValue.number(w["resets_at"]).map { Date(timeIntervalSince1970: $0) }
             if resetsAt == nil, let seconds = JSONValue.number(w["resets_in_seconds"]) {
                 // Older Codex versions reported a countdown instead of a timestamp.
                 resetsAt = observedAt.addingTimeInterval(seconds)
             }
+            if let reset = resetsAt, !supportedDates.contains(reset) { resetsAt = nil }
             windows.append(LimitWindow(
                 key: key,
                 label: LimitWindow.label(forMinutes: minutes) ?? key.capitalized,

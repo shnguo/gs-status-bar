@@ -23,6 +23,28 @@ public enum ClaudeUsageText {
         return parseOutput(text, observedAt: modified)
     }
 
+    /// Imports a status-line JSON report, structured usage JSON, stream-json, or plain usage text.
+    /// Use the file's modification date for reports without a timestamp, especially when text omits a reset date or year.
+    public static func parseImportedReport(_ data: Data, fallbackDate: Date = Date()) -> UsageSnapshot? {
+        let snapshot = ClaudeReader.parse(data, fallbackDate: fallbackDate)
+            ?? parseImportedJSON(data, observedAt: fallbackDate)
+            ?? String(data: data, encoding: .utf8).flatMap { parseOutput($0, observedAt: fallbackDate) }
+
+        let supportedDates = Date.distantPast...Date.distantFuture
+        guard let snapshot, supportedDates.contains(snapshot.observedAt),
+              snapshot.windows.allSatisfy({ window in
+                  window.usedPercent.isFinite && (window.resetsAt.map(supportedDates.contains) ?? true)
+              }) else { return nil }
+        return snapshot
+    }
+
+    private static func parseImportedJSON(_ data: Data, observedAt: Date) -> UsageSnapshot? {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        let report = object["usage_report"] as? [String: Any] ?? object
+        return parseReport(report, observedAt: observedAt)
+            ?? (object["result"] as? String).flatMap { parse($0, observedAt: observedAt) }
+    }
+
     /// Accepts stream-json lines (structured report, else the text inside them) or plain text.
     public static func parseOutput(_ output: String, observedAt: Date) -> UsageSnapshot? {
         var texts: [String] = []

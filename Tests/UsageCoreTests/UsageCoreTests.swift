@@ -43,6 +43,15 @@ final class CodexReaderTests: XCTestCase {
         XCTAssertEqual(s.windows[0].resetsAt, s.observedAt.addingTimeInterval(600))
     }
 
+    func testRejectsInvalidUsageAndDropsInvalidWindowMetadata() throws {
+        let line = #"{"payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":"NaN"},"secondary":{"used_percent":5,"window_minutes":"Infinity","resets_at":1e30}}}}"#
+        let windows = try XCTUnwrap(CodexReader.parseLine(Data(line.utf8))).snapshot.windows
+        XCTAssertEqual(windows.map(\.key), ["secondary"])
+        XCTAssertEqual(windows.first?.usedPercent, 5)
+        XCTAssertNil(windows.first?.windowMinutes)
+        XCTAssertNil(windows.first?.resetsAt)
+    }
+
     func testIgnoresOtherEvents() {
         let lines = [
             #"{"type":"event_msg","payload":{"type":"agent_message","message":"rate_limits"}}"#,
@@ -194,6 +203,49 @@ final class ClaudeUsageTextTests: XCTestCase {
     func testIgnoresUnrelatedText() {
         XCTAssertNil(ClaudeUsageText.parse("Not logged in · Please run /login", observedAt: observed))
         XCTAssertNil(ClaudeUsageText.parse("  54%  Start fresh when you switch tasks", observedAt: observed))
+    }
+
+    func testImportsUsageTextAndStreamJSON() throws {
+        let text = try XCTUnwrap(ClaudeUsageText.parseImportedReport(Data(Self.sample.utf8), fallbackDate: observed))
+        XCTAssertEqual(text.observedAt, observed)
+        XCTAssertEqual(text.windows[0].resetsAt, Date(timeIntervalSince1970: 1_794_289_200))
+
+        let stream = try XCTUnwrap(ClaudeUsageText.parseImportedReport(Data(Self.streamOutput.utf8), fallbackDate: observed))
+        XCTAssertEqual(stream.windows.map(\.usedPercent), [68, 51, 15])
+    }
+
+    func testImportsStandaloneStructuredJSON() throws {
+        let report = """
+        {
+          "rate_limits": {
+            "limits": [{"kind":"session","percent":25,"resets_at":"2026-11-10T05:40:00Z"}]
+          }
+        }
+        """
+        for json in [report, "{\"usage_report\":\(report)}"] {
+            let snapshot = try XCTUnwrap(ClaudeUsageText.parseImportedReport(Data(json.utf8), fallbackDate: observed))
+            XCTAssertEqual(snapshot.windows.map(\.usedPercent), [25])
+            XCTAssertEqual(snapshot.windows[0].resetsAt, Date(timeIntervalSince1970: 1_794_289_200))
+        }
+    }
+
+    func testImportsStatusLineJSONWithOriginalObservationTime() throws {
+        let json = #"{"rate_limits":{"five_hour":{"used_percentage":36.4}},"ts":1794214000.5}"#
+        let snapshot = try XCTUnwrap(ClaudeUsageText.parseImportedReport(Data(json.utf8), fallbackDate: observed))
+        XCTAssertEqual(snapshot.observedAt, Date(timeIntervalSince1970: 1_794_214_000.5))
+        XCTAssertEqual(snapshot.windows.map(\.usedPercent), [36.4])
+    }
+
+    func testRejectsInvalidImportedReports() {
+        let invalidReports = [
+            "Not logged in",
+            #"{"rate_limits":{"five_hour":{"used_percentage":"nan"}}}"#,
+            #"{"rate_limits":{"five_hour":{"used_percentage":20,"resets_at":"inf"}}}"#,
+            #"{"rate_limits":{"five_hour":{"used_percentage":20}},"ts":"1e40"}"#,
+        ]
+        for report in invalidReports {
+            XCTAssertNil(ClaudeUsageText.parseImportedReport(Data(report.utf8), fallbackDate: observed))
+        }
     }
 
     func testReadLatestPicksNewerSource() throws {

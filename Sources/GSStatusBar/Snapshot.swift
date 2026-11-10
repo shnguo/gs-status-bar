@@ -5,13 +5,32 @@ import UsageCore
 /// Renders the dropdown and menu bar label to PNG files, in light and dark mode.
 @MainActor
 enum Snapshot {
+    static func sample(for provider: Provider, at now: Date) -> UsageSnapshot {
+        switch provider {
+        case .claude:
+            UsageSnapshot(provider: .claude, windows: [
+                LimitWindow(key: "five_hour", label: "5-hour", usedPercent: 93, resetsAt: now.addingTimeInterval(5_400), windowMinutes: 300),
+                LimitWindow(key: "seven_day", label: "Weekly", usedPercent: 41, resetsAt: now.addingTimeInterval(300_000), windowMinutes: 10080),
+            ], observedAt: now.addingTimeInterval(-120), source: "Sample data", plan: nil)
+        case .codex:
+            UsageSnapshot(provider: .codex, windows: [
+                LimitWindow(key: "primary", label: "5-hour", usedPercent: 75, resetsAt: now.addingTimeInterval(2_000), windowMinutes: 300),
+                LimitWindow(key: "secondary", label: "Weekly", usedPercent: 12, resetsAt: now.addingTimeInterval(400_000), windowMinutes: 10080),
+            ], observedAt: now.addingTimeInterval(-30), source: "Sample data", plan: "plus")
+        }
+    }
+
+    #if !APP_STORE
     static func run(outputDir: String, useSampleData: Bool) {
         _ = NSApplication.shared
         NSApp.setActivationPolicy(.prohibited)
 
         let store = UsageStore(startServices: false)
         store.loadNow()
-        if useSampleData { applySample(to: store) }
+        if useSampleData {
+            store.claude = sample(for: .claude, at: store.now)
+            store.codex = sample(for: .codex, at: store.now)
+        }
 
         let dir = URL(fileURLWithPath: outputDir, isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -35,18 +54,6 @@ enum Snapshot {
             save(label: label, appearance: appearance, to: dir.appendingPathComponent("menubar-\(name).png"))
         }
         print("Saved snapshots to \(dir.path)")
-    }
-
-    private static func applySample(to store: UsageStore) {
-        let now = Date()
-        store.claude = UsageSnapshot(provider: .claude, windows: [
-            LimitWindow(key: "five_hour", label: "5-hour", usedPercent: 93, resetsAt: now.addingTimeInterval(5_400), windowMinutes: 300),
-            LimitWindow(key: "seven_day", label: "Weekly", usedPercent: 41, resetsAt: now.addingTimeInterval(300_000), windowMinutes: 10080),
-        ], observedAt: now.addingTimeInterval(-120), source: "sample", plan: nil)
-        store.codex = UsageSnapshot(provider: .codex, windows: [
-            LimitWindow(key: "primary", label: "5-hour", usedPercent: 75, resetsAt: now.addingTimeInterval(2_000), windowMinutes: 300),
-            LimitWindow(key: "secondary", label: "Weekly", usedPercent: 12, resetsAt: now.addingTimeInterval(400_000), windowMinutes: 10080),
-        ], observedAt: now.addingTimeInterval(-30), source: "sample", plan: "plus")
     }
 
     private static func save(view: NSView, to url: URL) {
@@ -89,4 +96,5 @@ enum Snapshot {
         NSGraphicsContext.restoreGraphicsState()
         try? rep.representation(using: .png, properties: [:])?.write(to: url)
     }
+    #endif
 }

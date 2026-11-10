@@ -1,6 +1,9 @@
 import AppKit
 import Observation
 import ServiceManagement
+#if APP_STORE
+import UniformTypeIdentifiers
+#endif
 import UsageCore
 
 @MainActor
@@ -27,12 +30,24 @@ final class UsageStore {
     @ObservationIgnored private var watchers: [FileWatcher] = []
     @ObservationIgnored private var timer: Timer?
     @ObservationIgnored private var pendingRefresh: Task<Void, Never>?
+    #if APP_STORE
+    private var codexFolder: StoreCodexFolder?
+    private var sampleDate: Date?
+    private(set) var codexFolderError: String?
+    private(set) var claudeImportError: String?
+    private(set) var isImportingClaudeReport = false
+
+    var codexFolderName: String? { codexFolder?.url.lastPathComponent }
+    var hasClaudeReport: Bool { claude != nil }
+    var isShowingSample: Bool { sampleDate != nil }
+    #else
     /// False in snapshot mode, which must not run anything.
     @ObservationIgnored private var servicesStarted = false
     /// When Claude was last seen in use: its numbers changed, or a hook saved new ones.
     @ObservationIgnored private var lastClaudeActivity: Date?
     /// When the app last asked for Claude's numbers itself.
     @ObservationIgnored private var lastClaudePoll = Date.distantPast
+    #endif
     /// Rollout files that changed recently, newest first.
     @ObservationIgnored private var activeCodexFiles: [URL] = []
 
@@ -43,28 +58,44 @@ final class UsageStore {
     }
 
     func snapshot(for provider: Provider) -> UsageSnapshot? {
-        provider == .claude ? claude : codex
+        #if APP_STORE
+        if let sampleDate { return Snapshot.sample(for: provider, at: sampleDate) }
+        #endif
+        return provider == .claude ? claude : codex
     }
 
     /// - Parameter startServices: false for snapshot mode (no file watching or notifications).
     init(startServices: Bool = true) {
-        defaults.register(defaults: ["showClaude": true, "showCodex": true, "notifyLow": true])
+        #if APP_STORE
+        let notificationsDefault = false
+        #else
+        let notificationsDefault = true
+        #endif
+        defaults.register(defaults: ["showClaude": true, "showCodex": true, "notifyLow": notificationsDefault])
         showClaude = defaults.bool(forKey: "showClaude")
         showCodex = defaults.bool(forKey: "showCodex")
         notifyLow = defaults.bool(forKey: "notifyLow")
+        #if !APP_STORE
         servicesStarted = startServices
+        #endif
         guard startServices else { return }
 
-        try? FileManager.default.createDirectory(at: AppPaths.supportDir, withIntermediateDirectories: true)
         if isBundledApp { launchAtLogin = SMAppService.mainApp.status == .enabled }
         if notifyLow { notifier.requestAuthorization() }
 
+        #if APP_STORE
+        restoreStoreSources()
+        #else
+        try? FileManager.default.createDirectory(at: AppPaths.supportDir, withIntermediateDirectories: true)
         startWatching()
+        #endif
 
         // Fallback refresh in case a file event is missed; also keeps countdowns moving.
         timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
+                #if !APP_STORE
                 self?.pollClaudeUsage()
+                #endif
                 self?.refresh()
             }
         }
@@ -81,10 +112,25 @@ final class UsageStore {
     func refresh() {
         pendingRefresh?.cancel()
         let hints = activeCodexFiles
+        #if APP_STORE
+        let folder = codexFolder
+        #endif
         pendingRefresh = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(150))
             guard !Task.isCancelled else { return }
 
+            #if APP_STORE
+            let codex = await Task.detached(priority: .utility) { () -> UsageSnapshot? in
+                guard let folder else { return nil }
+                return withExtendedLifetime(folder) {
+                    CodexReader.read(sessionsDir: folder.url, extraFiles: hints)
+                }
+            }.value
+
+            guard let self, !Task.isCancelled else { return }
+            self.now = Date()
+            if self.codex != codex { self.codex = codex }
+            #else
             let (claude, codex) = await Task.detached(priority: .utility) {
                 (ClaudeReader.readLatest(), CodexReader.read(extraFiles: hints))
             }.value
@@ -98,12 +144,21 @@ final class UsageStore {
             if numbersChanged || savedByHook { self.lastClaudeActivity = self.now }
             if self.claude != claude { self.claude = claude }
             if self.codex != codex { self.codex = codex }
-            if self.notifyLow {
-                self.notifier.check([claude, codex].compactMap { $0 }, now: self.now)
-            }
+            #endif
+            self.checkNotifications()
         }
     }
 
+    private func checkNotifications() {
+        #if APP_STORE
+        guard !isShowingSample else { return }
+        #endif
+        if notifyLow {
+            notifier.check([claude, codex].compactMap { $0 }, now: now)
+        }
+    }
+
+    #if !APP_STORE
     /// Reads both sources synchronously, without notifications. Used by snapshot mode.
     func loadNow() {
         claude = ClaudeReader.readLatest()
@@ -137,6 +192,7 @@ final class UsageStore {
         process.standardError = FileHandle.nullDevice
         try? process.run()
     }
+    #endif
 
     func setLaunchAtLogin(_ enabled: Bool) {
         guard isBundledApp else {
@@ -160,15 +216,12 @@ final class UsageStore {
         }
     }
 
+    #if !APP_STORE
     private func startWatching() {
         let sessionsDir = CodexReader.defaultSessionsDir.standardizedFileURL.path
         // If ~/.codex/sessions doesn't exist yet, watch the closest folder that does.
         let codexWatchPath = Self.closestExistingFolder(sessionsDir)
-        if let watcher = FileWatcher(paths: [codexWatchPath], handler: { [weak self] paths in
-            MainActor.assumeIsolated { self?.codexFilesChanged(paths, sessionsDir: sessionsDir) }
-        }) {
-            watchers.append(watcher)
-        }
+        watchCodexFolder(at: codexWatchPath, sessionsDir: sessionsDir)
 
         let claudeFiles = [ClaudeReader.defaultCacheFile, ClaudeUsageText.defaultFile].map { "/" + $0.lastPathComponent }
         if let watcher = FileWatcher(paths: [AppPaths.supportDir.path], handler: { [weak self] paths in
@@ -179,9 +232,27 @@ final class UsageStore {
         }
     }
 
+    private static func closestExistingFolder(_ path: String) -> String {
+        var url = URL(fileURLWithPath: path)
+        while !FileManager.default.fileExists(atPath: url.path), url.path != "/" {
+            url.deleteLastPathComponent()
+        }
+        return url.path
+    }
+    #endif
+
+    private func watchCodexFolder(at path: String, sessionsDir: String) {
+        if let watcher = FileWatcher(paths: [path], handler: { [weak self] paths in
+            MainActor.assumeIsolated { self?.codexFilesChanged(paths, sessionsDir: sessionsDir) }
+        }) {
+            watchers.append(watcher)
+        }
+    }
+
     private func codexFilesChanged(_ paths: [String], sessionsDir: String) {
+        let prefix = sessionsDir.hasSuffix("/") ? sessionsDir : sessionsDir + "/"
         let rollouts = paths.filter {
-            $0.hasPrefix(sessionsDir) && $0.hasSuffix(".jsonl") && $0.contains("/rollout-")
+            $0.hasPrefix(prefix) && $0.hasSuffix(".jsonl") && $0.contains("/rollout-")
         }
         guard !rollouts.isEmpty else { return }
         for path in rollouts {
@@ -193,11 +264,106 @@ final class UsageStore {
         refresh()
     }
 
-    private static func closestExistingFolder(_ path: String) -> String {
-        var url = URL(fileURLWithPath: path)
-        while !FileManager.default.fileExists(atPath: url.path), url.path != "/" {
-            url.deleteLastPathComponent()
+    #if APP_STORE
+    private static let codexBookmarkKey = "codexSessionsBookmark"
+    private static let claudeReportKey = "importedClaudeReport"
+
+    func chooseCodexFolder() {
+        let panel = NSOpenPanel()
+        panel.title = "Choose Codex Sessions Folder"
+        panel.message = "Select your Codex sessions folder. The usual location is ~/.codex/sessions."
+        panel.prompt = "Connect"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = false
+        panel.showsHiddenFiles = true
+        panel.directoryURL = codexFolder?.url ?? CodexReader.defaultSessionsDir
+
+        NSApp.activate()
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        defer { url.stopAccessingSecurityScopedResource() }
+
+        do {
+            try connectCodexFolder(bookmark: StoreCodexFolder.bookmark(for: url))
+            refresh()
+        } catch {
+            codexFolderError = "Couldn’t open this folder. Choose your Codex sessions folder again."
         }
-        return url.path
     }
+
+    func disconnectCodexFolder() {
+        pendingRefresh?.cancel()
+        watchers.removeAll()
+        activeCodexFiles.removeAll()
+        codexFolder = nil
+        codex = nil
+        codexFolderError = nil
+        defaults.removeObject(forKey: Self.codexBookmarkKey)
+    }
+
+    func importClaudeReport() {
+        let panel = NSOpenPanel()
+        panel.title = "Import Claude Code Usage Report"
+        panel.prompt = "Import"
+        panel.allowedContentTypes = [.plainText, .json, UTType(filenameExtension: "jsonl") ?? .text]
+
+        NSApp.activate()
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        claudeImportError = nil
+        isImportingClaudeReport = true
+        Task {
+            defer { isImportingClaudeReport = false }
+            do {
+                let report = try await Task.detached(priority: .userInitiated) {
+                    try StoreClaudeReport.readSelectedFile(url)
+                }.value
+                defaults.set(try JSONEncoder().encode(report), forKey: Self.claudeReportKey)
+                claude = report
+                now = Date()
+                checkNotifications()
+            } catch {
+                claudeImportError = error.localizedDescription
+            }
+        }
+    }
+
+    func clearClaudeReport() {
+        claude = nil
+        claudeImportError = nil
+        defaults.removeObject(forKey: Self.claudeReportKey)
+    }
+
+    func toggleSampleData() {
+        now = Date()
+        sampleDate = isShowingSample ? nil : now
+    }
+
+    private func restoreStoreSources() {
+        if let data = defaults.data(forKey: Self.claudeReportKey) {
+            claude = try? JSONDecoder().decode(UsageSnapshot.self, from: data)
+        }
+        if let bookmark = defaults.data(forKey: Self.codexBookmarkKey) {
+            do {
+                try connectCodexFolder(bookmark: bookmark)
+            } catch {
+                defaults.removeObject(forKey: Self.codexBookmarkKey)
+                codexFolderError = "Access to the saved folder expired. Choose your Codex sessions folder again."
+            }
+        }
+    }
+
+    private func connectCodexFolder(bookmark: Data) throws {
+        let (folder, refreshedBookmark) = try StoreCodexFolder.resolve(bookmark)
+        pendingRefresh?.cancel()
+        watchers.removeAll()
+        activeCodexFiles.removeAll()
+        codex = nil
+        codexFolder = folder
+        codexFolderError = nil
+        defaults.set(refreshedBookmark, forKey: Self.codexBookmarkKey)
+        let path = folder.url.standardizedFileURL.path
+        watchCodexFolder(at: path, sessionsDir: path)
+    }
+    #endif
 }

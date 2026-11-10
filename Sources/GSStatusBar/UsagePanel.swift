@@ -9,9 +9,16 @@ struct UsagePanel: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 Text("Usage limits").font(.headline)
+                #if APP_STORE
+                if store.isShowingSample {
+                    Text("Sample data").font(.caption).foregroundStyle(.secondary)
+                }
+                #endif
                 Spacer()
                 Button {
+                    #if !APP_STORE
                     store.fetchClaudeUsage(force: true)
+                    #endif
                     store.refresh()
                 } label: {
                     Image(systemName: "arrow.clockwise")
@@ -28,6 +35,11 @@ struct UsagePanel: View {
             }
 
             Divider()
+
+            #if APP_STORE
+            storeSources
+            Divider()
+            #endif
 
             VStack(alignment: .leading, spacing: 6) {
                 Toggle("Show Claude Code", isOn: $store.showClaude)
@@ -47,6 +59,12 @@ struct UsagePanel: View {
             Divider()
 
             HStack {
+                #if APP_STORE
+                Button(store.isShowingSample ? "Hide Sample Data" : "Show Sample Data") {
+                    store.toggleSampleData()
+                }
+                Button("Privacy Policy") { showPrivacyPolicy() }
+                #endif
                 Spacer()
                 Button("Quit") { NSApp.terminate(nil) }
                     .keyboardShortcut("q")
@@ -55,10 +73,68 @@ struct UsagePanel: View {
         .padding(14)
         .frame(width: 320)
         .onAppear {
+            #if !APP_STORE
             store.fetchClaudeUsage(force: false)
+            #endif
             store.refresh()
         }
     }
+
+    #if APP_STORE
+    private var storeSources: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Button(store.codexFolderName == nil ? "Choose Codex Folder…" : "Change Folder…") {
+                    store.chooseCodexFolder()
+                }
+                if let folder = store.codexFolderName {
+                    Text(folder).lineLimit(1).foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                    Button("Disconnect") { store.disconnectCodexFolder() }
+                }
+            }
+            if let message = store.codexFolderError {
+                Text(message).foregroundStyle(.secondary)
+            }
+            HStack {
+                Button("Import Claude Report…") { store.importClaudeReport() }
+                    .disabled(store.isImportingClaudeReport)
+                if store.isImportingClaudeReport {
+                    ProgressView().controlSize(.small)
+                }
+                Spacer(minLength: 0)
+                if store.hasClaudeReport {
+                    Button("Clear Report") { store.clearClaudeReport() }
+                        .disabled(store.isImportingClaudeReport)
+                }
+            }
+            if let message = store.claudeImportError {
+                Text(message).foregroundStyle(.secondary)
+            }
+        }
+        .font(.caption)
+    }
+
+    private func showPrivacyPolicy() {
+        let alert = NSAlert()
+        alert.messageText = "GS Status Bar Privacy Policy"
+        alert.informativeText = """
+            GS Status Bar processes usage data on this Mac. It reads Codex session files from the folder you select to extract rate-limit fields, and extracts usage limits from Claude reports you import.
+
+            The app saves your settings, folder permission, and parsed Claude usage summary locally. It does not store a copy of the imported report or send this data anywhere. Use Disconnect or Clear Report to remove the saved folder permission or Claude summary.
+            """
+        alert.addButton(withTitle: "Done")
+        let policy = (Bundle.main.object(forInfoDictionaryKey: "GSPrivacyPolicyURL") as? String)
+            .flatMap { URL(string: $0) }
+            .flatMap { $0.scheme == "https" && $0.host != nil ? $0 : nil }
+        if policy != nil { alert.addButton(withTitle: "Open Privacy Policy") }
+
+        NSApp.activate()
+        if alert.runModal() == .alertSecondButtonReturn, let policy {
+            NSWorkspace.shared.open(policy)
+        }
+    }
+    #endif
 }
 
 private struct ProviderSection: View {
@@ -103,9 +179,17 @@ private struct ProviderSection: View {
     private var emptyHint: String {
         switch provider {
         case .claude:
+            #if APP_STORE
+            "Import a Claude Code usage report to see your limits here."
+            #else
             "No data yet. Run scripts/install-claude-hook.sh, then it updates after each Claude Code reply, in the terminal or the Claude desktop app."
+            #endif
         case .codex:
+            #if APP_STORE
+            "Choose your Codex sessions folder. Usage appears after a Codex request."
+            #else
             "No data yet. It appears after your next Codex request."
+            #endif
         }
     }
 }
