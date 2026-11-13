@@ -210,10 +210,12 @@ private struct ProviderSection: View {
                 }
                 Spacer()
                 if let snapshot {
-                    Text("updated \(Fmt.ago(snapshot.observedAt, now: now))")
+                    Text("updated \(Fmt.ago(snapshot.observedAt, now: now))" + (snapshot.mayBeBehind ? " · may be behind" : ""))
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                        .help(snapshot.source)
+                        .help(snapshot.mayBeBehind
+                              ? "Anthropic is limiting usage checks right now, so Claude Code returned a saved copy. It can be up to an hour old."
+                              : snapshot.source)
                 }
             }
 

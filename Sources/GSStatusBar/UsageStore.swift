@@ -168,19 +168,20 @@ final class UsageStore {
 
     /// The `/usage` number trails Claude's live one by a minute or two, and hooks only fire while
     /// Claude Code is working, so the last hook of a turn saves a number that's already behind.
-    /// The app therefore also asks on its own: every 30 seconds for 10 minutes after Claude was
-    /// last seen in use, then every 5 minutes.
+    /// The app therefore also asks on its own: every minute for 10 minutes after Claude was
+    /// last seen in use, then every 5 minutes. The hook script decides whether a request really
+    /// goes out: it waits longer when Anthropic is refusing usage checks.
     private func pollClaudeUsage() {
         let now = Date()
         let inUse = lastClaudeActivity.map { now.timeIntervalSince($0) < 600 } ?? false
-        guard now.timeIntervalSince(lastClaudePoll) >= (inUse ? 25 : 295) else { return }
+        guard now.timeIntervalSince(lastClaudePoll) >= (inUse ? 55 : 295) else { return }
         lastClaudePoll = now
         fetchClaudeUsage(force: false)
     }
 
     /// Asks the Claude Code CLI for fresh numbers through the installed hook script.
     /// The script runs `/usage` in the background; the file watcher picks up the result.
-    /// Without `force`, the script waits until 15 seconds after its last run.
+    /// Without `force`, the script waits until a minute (or its longer back-off) after its last run.
     func fetchClaudeUsage(force: Bool) {
         let script = AppPaths.supportDir.appendingPathComponent("claude-usage-hook.sh")
         guard servicesStarted, showClaude, FileManager.default.fileExists(atPath: script.path) else { return }

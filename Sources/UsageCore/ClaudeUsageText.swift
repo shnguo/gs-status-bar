@@ -48,17 +48,22 @@ public enum ClaudeUsageText {
     /// Accepts stream-json lines (structured report, else the text inside them) or plain text.
     public static func parseOutput(_ output: String, observedAt: Date) -> UsageSnapshot? {
         var texts: [String] = []
+        var savedCopy = false
         for line in output.split(whereSeparator: \.isNewline) {
             guard line.hasPrefix("{"),
                   let obj = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any]
             else { continue }
-            if let report = obj["usage_report"] as? [String: Any],
-               let snapshot = parseReport(report, observedAt: observedAt) {
-                return snapshot
+            if let report = obj["usage_report"] as? [String: Any] {
+                if let snapshot = parseReport(report, observedAt: observedAt) { return snapshot }
+                // A report without limits: Anthropic refused the check, and the text holds
+                // Claude Code's saved copy of the numbers.
+                savedCopy = true
             }
             if let result = obj["result"] as? String { texts.append(result) }
         }
-        return parse(texts.isEmpty ? output : texts.joined(separator: "\n"), observedAt: observedAt)
+        var snapshot = parse(texts.isEmpty ? output : texts.joined(separator: "\n"), observedAt: observedAt)
+        snapshot?.mayBeBehind = savedCopy
+        return snapshot
     }
 
     /// `usage_report.rate_limits.limits`: `[{kind, group, percent, resets_at, scope}]`.

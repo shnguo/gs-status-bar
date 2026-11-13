@@ -200,6 +200,20 @@ final class ClaudeUsageTextTests: XCTestCase {
         XCTAssertEqual(s.windows[0].resetsAt, Date(timeIntervalSince1970: 1_794_289_200))
     }
 
+    /// When Anthropic refuses a usage check, the report has no limits and the text is a saved copy.
+    func testReportWithoutLimitsIsMarkedAsSavedCopy() throws {
+        let refused = #"""
+        {"type":"assistant","message":{"content":[]},"usage_report":{"session":{"total_cost_usd":0},"rate_limits":{"limits":null,"extra_usage":{"is_enabled":true}}}}
+        {"type":"result","subtype":"success","result":"Current session: 61% used · resets 9:40pm (America/Los_Angeles)"}
+        """#
+        let saved = try XCTUnwrap(ClaudeUsageText.parseOutput(refused, observedAt: observed))
+        XCTAssertEqual(saved.windows.map(\.usedPercent), [61])
+        XCTAssertTrue(saved.mayBeBehind)
+
+        let fresh = try XCTUnwrap(ClaudeUsageText.parseOutput(Self.streamOutput, observedAt: observed))
+        XCTAssertFalse(fresh.mayBeBehind)
+    }
+
     func testIgnoresUnrelatedText() {
         XCTAssertNil(ClaudeUsageText.parse("Not logged in · Please run /login", observedAt: observed))
         XCTAssertNil(ClaudeUsageText.parse("  54%  Start fresh when you switch tasks", observedAt: observed))

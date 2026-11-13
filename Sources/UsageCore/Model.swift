@@ -76,6 +76,9 @@ public struct UsageSnapshot: Codable, Equatable, Sendable {
     /// Human-readable description of where the data came from.
     public let source: String
     public let plan: String?
+    /// True when the provider answered with a saved copy instead of current numbers
+    /// (Claude Code does this when Anthropic refuses a usage check). It can be up to an hour old.
+    public var mayBeBehind = false
 
     public init(provider: Provider, windows: [LimitWindow], observedAt: Date, source: String, plan: String?) {
         self.provider = provider
